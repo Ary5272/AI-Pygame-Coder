@@ -1,0 +1,131 @@
+import google.generativeai as genai
+import os
+import subprocess
+
+# --- IMPORTANT: CONFIGURE YOUR API KEY ---
+# Replace "YOUR_API_KEY_HERE" with your actual Gemini API key.
+API_KEY = "YOUR_API_KEY_HERE"
+
+# --- MODEL CONFIGURATION ---
+MODEL_NAME = "gemini-1.5-pro"
+
+def configure_ai():
+    """Configures the generative AI model."""
+    try:
+        genai.configure(api_key=API_KEY)
+        return True
+    except Exception as e:
+        print(f"Configuration Error: {e}")
+        return False
+
+def extract_python_code(text):
+    """Extracts Python code from a markdown-formatted string."""
+    code_block_start = text.find("```python")
+    if code_block_start != -1:
+        code_block_end = text.rfind("```")
+        if code_block_end > code_block_start:
+            return text[code_block_start + len("```python"):code_block_end].strip()
+    return text.strip()
+
+def generate_pygame_code(prompt):
+    """Sends a prompt to the Gemini API and returns the generated code."""
+    model = genai.GenerativeModel(MODEL_NAME)
+    
+    generation_config = {
+        "max_output_tokens": 8192,
+        "temperature": 0.2,
+    }
+    
+    full_prompt = f"""
+    You are an expert Pygame developer. Your task is to write a single, complete, runnable Pygame script based on the user's request.
+    Follow these rules strictly:
+    1.  The code must be self-contained in a single Python file.
+    2.  Do NOT use any external files (images, sounds, fonts). Generate or draw all assets with Pygame's drawing functions.
+    3.  The code must be well-commented to explain the logic.
+    4.  The script must include a standard game loop with event handling for the QUIT event.
+    5.  Wrap the final code in a single Python markdown block (```python ... ```). Do not include any explanatory text outside of the code block.
+    """
+    
+    print(f"\n🤖 Sending request to {MODEL_NAME}...")
+    try:
+        response = model.generate_content(
+            full_prompt + f'\nUser\'s request: "{prompt}"',
+            generation_config=generation_config
+        )
+        
+        if not response.candidates or not response.candidates[0].finish_reason == "STOP":
+            reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
+            print(f"\n⚠️ WARNING: The AI did not finish generating the code successfully. Finish Reason: {reason.name}")
+            return None
+
+        clean_code = extract_python_code(response.text)
+        return clean_code
+
+    except Exception as e:
+        print(f"❌ An error occurred while communicating with the API: {e}")
+        return None
+
+def validate_code(file_path):
+    """Runs pylint on the generated file to check for errors."""
+    print(f"\n🔬 Running validator (pylint) on {file_path}...")
+    try:
+        result = subprocess.run(
+            ['pylint', file_path, '--disable=all', '--enable=E,F'],
+            capture_output=True, 
+            text=True
+        )
+        
+        # A successful check will have an empty output for critical errors
+        if not result.stdout.strip() and not result.stderr.strip():
+            print("✅ Validator passed! No critical syntax errors found.")
+            return True, "No critical errors found."
+        else:
+            # Report the found errors
+            print("⚠️ Validator found potential issues.")
+            return False, result.stdout.strip()
+
+    except FileNotFoundError:
+        print("❌ Pylint not found. Make sure you have installed it with 'pip install pylint'")
+        return False, "Pylint not installed."
+    except Exception as e:
+        print(f"❌ An error occurred during validation: {e}")
+        return False, str(e)
+
+def main():
+    """Main function updated to include the validation step."""
+    print(f"--- AI Pygame Coder v4 (Generator + Validator) ---")
+    
+    if "YOUR_API_KEY_HERE" in API_KEY or not configure_ai():
+        print("\n⚠️ ERROR: API key not configured correctly.")
+        print("Please open the script and replace 'YOUR_API_KEY_HERE' with your new key.")
+        return
+
+    game_description = input("▶️ Describe the Pygame game you want to create: ")
+    if not game_description: return
+        
+    generated_code = generate_pygame_code(game_description)
+    
+    if generated_code:
+        file_name = "temp_game.py"
+        try:
+            with open(file_name, 'w') as f:
+                f.write(generated_code)
+            
+            # --- VALIDATION STEP ---
+            is_valid, report = validate_code(file_name)
+
+            if is_valid:
+                print(f"\n✅ Success! The generated code in '{file_name}' appears to be valid.")
+                print(f"To run it, type this in your terminal: python {file_name}")
+            else:
+                print(f"\n--- Validator Report ---")
+                print("The AI generated code with potential errors:")
+                print(report)
+                print("--------------------------")
+                print(f"The flawed code has been saved to '{file_name}' for you to debug.")
+
+        except IOError as e:
+            print(f"\n❌ Error! Could not write file: {e}")
+
+if __name__ == "__main__":
+    main()
